@@ -4,9 +4,10 @@ import (
 	"casperParser/db"
 	"casperParser/rpc"
 	"context"
-	"github.com/hibiken/asynq"
 	"os"
 	"testing"
+
+	"github.com/hibiken/asynq"
 )
 
 func TestNewAccountHashTask(t *testing.T) {

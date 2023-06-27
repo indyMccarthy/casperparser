@@ -6,15 +6,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/hibiken/asynq"
 	"log"
+
+	"github.com/hibiken/asynq"
 )
 
 // TypeBlockRaw Task block raw insert
 // TypeBlockVerify Task block verify
 const (
-	TypeBlockRaw    = "block:raw"
-	TypeBlockVerify = "block:verify"
+	TypeBlockRaw       = "block:raw"
+	TypeBlockVerify    = "block:verify"
+	TypeNativeTransfer = "native_transfer"
 )
 
 // NewBlockRawTask used for not yet parsed blocks
@@ -56,13 +58,18 @@ func HandleBlockRawTask(ctx context.Context, t *asynq.Task) error {
 
 	if eraEnd {
 		addEraToQueue(result.Block.Hash)
+		addAuctionEraToQueue(result.Block.Header.Height)
 	}
 
 	for _, s := range result.Block.Body.TransferHashes {
 		addDeployToQueue(s)
+		// TODO: Deploy info does not contain timestamp, so we take Block timestamps which is not accurate, even false sometimes
+		addDeployToDeployInfoQueue(s, result.Block.Hash, result.Block.Header.StateRootHash, result.Block.Header.Timestamp)
 	}
 	for _, s := range result.Block.Body.DeployHashes {
 		addDeployToQueue(s)
+		// TODO: Deploy info does not contain timestamp, so we take Block timestamps which is not accurate, even false sometimes
+		addDeployToDeployInfoQueue(s, result.Block.Hash, result.Block.Header.StateRootHash, result.Block.Header.Timestamp)
 	}
 	return nil
 }
@@ -97,6 +104,17 @@ func HandleBlockVerifyTask(ctx context.Context, t *asynq.Task) error {
 	return nil
 }
 
+func addAuctionEraToQueue(blockheight int) {
+	task, err := NewAuctionEraTask(blockheight)
+	if err != nil {
+		log.Printf("could not create task: %v\n", err)
+	}
+	_, err = WorkerAsyncClient.Enqueue(task, asynq.Queue("auctionera"))
+	if err != nil {
+		log.Printf("could not enqueue task: %v\n", err)
+	}
+}
+
 // addDeployToQueue a deploy hash to the queue
 func addDeployToQueue(hash string) {
 	task, err := NewDeployRawTask(hash)
@@ -104,6 +122,30 @@ func addDeployToQueue(hash string) {
 		log.Fatalf("could not create task: %v", err)
 	}
 	_, err = WorkerAsyncClient.Enqueue(task, asynq.Queue("deploys"))
+	if err != nil {
+		log.Fatalf("could not enqueue task: %v", err)
+	}
+}
+
+// addDeployToQueue a deploy hash to the queue
+func addDeployToDeployInfoQueue(hash string, blockHash string, stateRootHash string, deployTimestamp string) {
+	task, err := NewDeployInfoRawTask(hash, blockHash, stateRootHash, deployTimestamp)
+	if err != nil {
+		log.Fatalf("could not create task: %v", err)
+	}
+	_, err = WorkerAsyncClient.Enqueue(task, asynq.Queue("deployinfos"))
+	if err != nil {
+		log.Fatalf("could not enqueue task: %v", err)
+	}
+}
+
+// addDeployToQueue a deploy hash to the queue
+func addTransferToQueue(hash string, blockHash string, deployHash string, deployTimestamp string, stateRootHash string) {
+	task, err := NewTransferRawTask(hash, blockHash, deployHash, deployTimestamp, stateRootHash)
+	if err != nil {
+		log.Fatalf("could not create task: %v", err)
+	}
+	_, err = WorkerAsyncClient.Enqueue(task, asynq.Queue("transfers"))
 	if err != nil {
 		log.Fatalf("could not enqueue task: %v", err)
 	}

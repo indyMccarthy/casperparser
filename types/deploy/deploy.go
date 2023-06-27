@@ -5,12 +5,13 @@ import (
 	"casperParser/types/config"
 	"encoding/json"
 	"fmt"
-	"github.com/Jeffail/gabs/v2"
 	"log"
 	"math/big"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/Jeffail/gabs/v2"
 )
 
 // GetDeployMetadata Retrieve deploy metadata
@@ -62,7 +63,7 @@ func (d Result) getModuleByteMetadata() (string, string) {
 			resolvedDeployType := deployType
 			if resolvedDeployType == "stackingOperation" {
 				resolvedDeployType = "undelegate"
-				_, cost, _ := d.GetResultAndCost()
+				_, cost, _, _ := d.GetResultAndCost()
 				bigCost := new(big.Int)
 				bigCost.SetString(cost, 10)
 				if bigCost.Cmp(big.NewInt(1000000000)) == 1 {
@@ -72,6 +73,7 @@ func (d Result) getModuleByteMetadata() (string, string) {
 			return resolvedDeployType, string(metadataString)
 		}
 	}
+	// TODO: Parse args and get Action parsed string instead of moduleBytes
 	return "moduleBytes", string(metadataString)
 }
 
@@ -94,6 +96,7 @@ func (d Result) GetType() string {
 	}
 	if d.Deploy.Session.ModuleBytes != nil {
 		return "moduleBytes"
+		//TODO: parse moduleBytes args and get DeployType
 	}
 	return "unknown"
 }
@@ -172,20 +175,26 @@ func (d Result) GetName() string {
 }
 
 // GetResultAndCost retrieve the result and cost of a deploy. Return an error if no result found (this can happen when a node is not sync properly)
-func (d Result) GetResultAndCost() (bool, string, error) {
+func (d Result) GetResultAndCost() (string, string, string, error) {
+	if len(d.ExecutionResults) > 1 {
+		fmt.Printf("More than 1 element in ExecutionResults for deploy %s", d.Deploy.Hash)
+	}
 	if len(d.ExecutionResults) > 0 {
 		var cost string
-		var result bool
+		var result string
+		var errorMessage string
 		if d.ExecutionResults[0].Result.Success != nil {
 			cost = d.ExecutionResults[0].Result.Success.Cost
-			result = true
+			result = "success"
+			errorMessage = ""
 		} else {
 			cost = d.ExecutionResults[0].Result.Failure.Cost
-			result = false
+			result = "failure"
+			errorMessage = d.ExecutionResults[0].Result.Failure.ErrorMessage
 		}
-		return result, cost, nil
+		return result, cost, errorMessage, nil
 	}
-	return false, "", fmt.Errorf("no result found for deploy : %s", d.Deploy.Hash)
+	return "NO_RESULT", "", "", fmt.Errorf("no result found for deploy : %s", d.Deploy.Hash)
 }
 
 // MapArgs maps the arguments of a deploy within a map

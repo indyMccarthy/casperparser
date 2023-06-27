@@ -5,9 +5,10 @@ import (
 	"casperParser/db"
 	"casperParser/tasks"
 	"context"
-	"github.com/hibiken/asynq"
 	"log"
 	"strconv"
+
+	"github.com/hibiken/asynq"
 
 	"github.com/spf13/cobra"
 )
@@ -29,12 +30,15 @@ casperParser worker --redis 127.0.0.1:6379 -- Will start the worker with a singl
 		conf := asynq.Config{
 			Concurrency: concurrency,
 			Queues: map[string]int{
-				"blocks":    1,
-				"deploys":   1,
-				"contracts": 1,
-				"era":       1,
-				"auction":   1,
-				"accounts":  1,
+				"blocks":      1,
+				"deploys":     1,
+				"deployinfos": 1,
+				"transfers":   1,
+				"contracts":   1,
+				"era":         1,
+				"auction":     1,
+				"auctionera":  1,
+				"accounts":    1,
 			},
 		}
 		tasks.WorkerRpcClient = getRpcClient()
@@ -46,8 +50,8 @@ casperParser worker --redis 127.0.0.1:6379 -- Will start the worker with a singl
 			}
 			for i := 0; i < len(queues); i += 2 {
 				var err error
-				if queues[i] != "blocks" && queues[i] != "deploys" && queues[i] != "contracts" && queues[i] != "era" && queues[i] != "auction" {
-					log.Fatalf("Unknown queue %s. Supported queues : blocks, deploys, contracts, era, auction, accounts", queues[i])
+				if queues[i] != "blocks" && queues[i] != "deploys" && queues[i] != "deployinfos" && queues[i] != "transfers" && queues[i] != "contracts" && queues[i] != "era" && queues[i] != "auction" && queues[i] != "auctionera" {
+					log.Fatalf("Unknown queue %s. Supported queues : blocks, deploys, deployinfos, transfers, contracts, era, auction, auctionera, accounts", queues[i])
 				}
 				queuesMap[queues[i]], err = strconv.Atoi(queues[i+1])
 				if err != nil {
@@ -67,7 +71,7 @@ casperParser worker --redis 127.0.0.1:6379 -- Will start the worker with a singl
 func init() {
 	RootCmd.AddCommand(workerCmd)
 	workerCmd.Flags().IntVarP(&concurrency, "concurrency", "k", 100, "Number of concurrent workers to use. The database connection pool will be set to the same number")
-	workerCmd.Flags().StringSliceVarP(&queues, "queues", "q", []string{"blocks", "1", "deploys", "1", "contracts", "1", "era", "1", "auction", "1", "accounts", "1"}, "Set queues with priority")
+	workerCmd.Flags().StringSliceVarP(&queues, "queues", "q", []string{"blocks", "1", "deploys", "1", "deployinfos", "1", "transfers", "1", "contracts", "1", "era", "1", "auction", "1", "auctionera", "1", "accounts", "1"}, "Set queues with priority")
 }
 
 // startWorkers with a redis and asynq config
@@ -86,11 +90,15 @@ func startWorkers(redis asynq.RedisConnOpt, conf asynq.Config) {
 	mux.HandleFunc(tasks.TypeBlockRaw, tasks.HandleBlockRawTask)
 	mux.HandleFunc(tasks.TypeBlockVerify, tasks.HandleBlockVerifyTask)
 	mux.HandleFunc(tasks.TypeDeployRaw, tasks.HandleDeployRawTask)
+	mux.HandleFunc(tasks.TypeDeployInfoRaw, tasks.HandleDeployInfoRawTask)
 	mux.HandleFunc(tasks.TypeDeployKnown, tasks.HandleDeployKnownTask)
+	mux.HandleFunc(tasks.TypeTransferRaw, tasks.HandleTransferRawTask)
+	mux.HandleFunc(tasks.TypeTransferKnown, tasks.HandleTransferKnownTask)
 	mux.HandleFunc(tasks.TypeContractPackageRaw, tasks.HandleContractPackageRawTask)
 	mux.HandleFunc(tasks.TypeContractRaw, tasks.HandleContractRawTask)
 	mux.HandleFunc(tasks.TypeReward, tasks.HandleRewardTask)
 	mux.HandleFunc(tasks.TypeAuction, tasks.HandleAuctionTask)
+	mux.HandleFunc(tasks.TypeAuctionEra, tasks.HandleAuctionEraTask)
 	mux.HandleFunc(tasks.TypeAccountHash, tasks.HandleAccountHashTask)
 	mux.HandleFunc(tasks.TypeAccountPublicKey, tasks.HandleAccountTask)
 	mux.HandleFunc(tasks.TypeAccountUref, tasks.HandlePurseTask)
