@@ -4,16 +4,18 @@ package db
 import (
 	"casperParser/types/block"
 	"casperParser/types/deploy"
+	"casperParser/types/transfer"
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"strconv"
+	"strings"
+
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
-	"log"
-	"strconv"
-	"strings"
 )
 
 type DB struct {
@@ -80,13 +82,35 @@ func (db *DB) InsertRawBlock(ctx context.Context, hash string, json string) erro
 }
 
 // InsertDeploy in the database
-func (db *DB) InsertDeploy(ctx context.Context, hash string, from string, cost string, result bool, timestamp string, block string, deployType string, json string, metadataType string, contractHash string, contractName string, entrypoint string, metadata string, events string) error {
+func (db *DB) InsertDeploy(ctx context.Context, hash string, from string, cost string, result string, errorMessage string, timestamp string, block string, deployType string, json string, metadataType string, contractHash string, contractName string, entrypoint string, metadata string, events string) error {
 	hash = strings.ToLower(hash)
 	err := db.InsertRawDeploy(ctx, hash, json)
 	if err != nil {
+		println("ERROR InsertRawDeploy")
+		fmt.Printf("%v", err)
 		return err
 	}
-	return db.UpdateDeploy(ctx, hash, from, cost, result, timestamp, block, deployType, metadataType, contractHash, contractName, entrypoint, metadata, events)
+	return db.UpdateDeploy(ctx, hash, from, cost, result, errorMessage, timestamp, block, deployType, metadataType, contractHash, contractName, entrypoint, metadata, events)
+}
+
+// InsertTransfer in the database
+func (db *DB) InsertTransfer(ctx context.Context, hash string, blockHash string, deployHash string, from string, to string, source string, target string, amount int, gas int, json string, id string) error {
+	hash = strings.ToLower(hash)
+	err := db.InsertRawTransfer(ctx, hash, blockHash, deployHash, json)
+	if err != nil {
+		return err
+	}
+	return db.UpdateTransfer(ctx, hash, blockHash, deployHash, from, to, source, target, amount, gas, id)
+}
+
+// InsertTransfer in the database
+func (db *DB) InsertDeployInfo(ctx context.Context, hash string, blockHash string, from string, source string, gas int, json string, transfers string) error {
+	hash = strings.ToLower(hash)
+	err := db.InsertRawDeployInfo(ctx, hash, blockHash, json)
+	if err != nil {
+		return err
+	}
+	return db.UpdateDeployInfo(ctx, hash, blockHash, from, source, gas, transfers)
 }
 
 func (db *DB) InsertAuction(ctx context.Context, rowsToInsertBids [][]interface{}, rowsToInsertDelegators [][]interface{}) error {
@@ -114,25 +138,45 @@ func (db *DB) InsertAuction(ctx context.Context, rowsToInsertBids [][]interface{
 	return db.checkErr(err)
 }
 
+func (db *DB) InsertAuctionEra(ctx context.Context, rowsToInsertBids [][]interface{}, rowsToInsertDelegators [][]interface{}) error {
+	_, err := db.Postgres.CopyFrom(
+		ctx,
+		pgx.Identifier{"bids_per_era"},
+		[]string{"block_height", "validator_public_key", "bonding_purse", "staked_amount", "delegation_rate", "inactive"},
+		pgx.CopyFromRows(rowsToInsertBids),
+	)
+	if db.checkErr(err) != nil {
+		return db.checkErr(err)
+	}
+	_, err = db.Postgres.CopyFrom(
+		ctx,
+		pgx.Identifier{"delegators_per_era"},
+		[]string{"block_height", "delegator_public_key", "validator_public_key", "staked_amount", "bonding_purse"},
+		pgx.CopyFromRows(rowsToInsertDelegators),
+	)
+	return db.checkErr(err)
+}
+
 // UpdateDeploy in the database
-func (db *DB) UpdateDeploy(ctx context.Context, hash string, from string, cost string, result bool, timestamp string, block string, deployType string, metadataType string, contractHash string, contractName string, entrypoint string, metadata string, events string) error {
+func (db *DB) UpdateDeploy(ctx context.Context, hash string, from string, cost string, result string, errorMessage string, timestamp string, block string, deployType string, metadataType string, contractHash string, contractName string, entrypoint string, metadata string, events string) error {
 	hash = strings.ToLower(hash)
-	const sql = `INSERT INTO deploys ("hash", "from", "cost", "result", "timestamp", "block", "type", "metadata_type", "contract_hash", "contract_name", "entrypoint", "metadata", "events")
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+	const sql = `INSERT INTO deploys ("hash", "from", "cost", "result", "error_message", "timestamp", "block", "type", "metadata_type", "contract_hash", "contract_name", "entrypoint", "metadata", "events")
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 	ON CONFLICT (hash)
 	DO UPDATE
 	SET "from" = $2,
 	cost = $3,
 	result = $4,
-	timestamp = $5,
-	block = $6,
-	type = $7,
-	metadata_type = $8,
-	contract_hash = $9,
-	contract_name = $10,
-	entrypoint = $11,
-	metadata = $12,
-	events = $13;`
+	error_message = $5,
+	"timestamp" = $6,
+	block = $7,
+	type = $8,
+	metadata_type = $9,
+	contract_hash = $10,
+	contract_name = $11,
+	entrypoint = $12,
+	metadata = $13,
+	events = $14;`
 	var m *string
 	m = nil
 	if metadata != "" {
@@ -158,7 +202,59 @@ func (db *DB) UpdateDeploy(ctx context.Context, hash string, from string, cost s
 	if entrypoint != "" {
 		ep = &entrypoint
 	}
-	_, err := db.Postgres.Exec(ctx, sql, hash, from, cost, result, timestamp, block, deployType, metadataType, ch, cn, ep, m, e)
+	var em *string
+	em = nil
+	if errorMessage != "" {
+		em = &errorMessage
+	}
+	_, err := db.Postgres.Exec(ctx, sql, hash, from, cost, result, em, timestamp, block, deployType, metadataType, ch, cn, ep, m, e)
+
+	if err != nil {
+		println("ERROR exec update deploy")
+		fmt.Printf("%v, %v, %v, %v, %v, %v, %v, %v, %v, %v, %v, %v, %v, %v", hash, from, cost, result, em, timestamp, block, deployType, metadataType, ch, cn, ep, m, e)
+		fmt.Printf("%v", err)
+	}
+	return db.checkErr(err)
+}
+
+// UpdateTransfer in the database
+func (db *DB) UpdateTransfer(ctx context.Context, hash string, block string, deploy string, from string, to string, source string, target string, amount int, gas int, id string) error {
+	hash = strings.ToLower(hash)
+	const sql = `INSERT INTO transfers ("hash", "block", "deploy", "from", "to", "source", "target", "amount", "gas", "id")
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	ON CONFLICT (hash)
+	DO UPDATE
+	SET "block" = $2,
+	"deploy" = $3,
+	"from" = $4,
+	"to" = $5,
+	"source" = $6,
+	"target" = $7,
+	"amount" = $8,
+	"gas" = $9,
+	"id" = $10;`
+	var mId *string
+	mId = nil
+	if id != "" {
+		mId = &id
+	}
+	_, err := db.Postgres.Exec(ctx, sql, hash, block, deploy, from, to, source, target, amount, gas, mId)
+	return db.checkErr(err)
+}
+
+// UpdateTransfer in the database
+func (db *DB) UpdateDeployInfo(ctx context.Context, hash string, block string, from string, source string, gas int, transfers string) error {
+	hash = strings.ToLower(hash)
+	const sql = `INSERT INTO deploy_infos ("hash", "block", "from", "source", "gas", "transfers")
+	VALUES ($1, $2, $3, $4, $5, $6)
+	ON CONFLICT (hash)
+	DO UPDATE
+	SET "block" = $2,
+	"from" = $3,
+	"source" = $4,
+	"gas" = $5,
+	"transfers" = $6;`
+	_, err := db.Postgres.Exec(ctx, sql, hash, block, from, source, gas, transfers)
 	return db.checkErr(err)
 }
 
@@ -171,6 +267,33 @@ func (db *DB) InsertRawDeploy(ctx context.Context, hash string, json string) err
 	DO UPDATE
 	SET data = $2;`
 	_, err := db.Postgres.Exec(ctx, sql, hash, json)
+	return db.checkErr(err)
+}
+
+// InsertRawTransfer in the database
+func (db *DB) InsertRawTransfer(ctx context.Context, hash string, block string, deploy string, json string) error {
+	hash = strings.ToLower(hash)
+	const sql = `INSERT INTO raw_transfers ("hash", "block", "deploy", "data")
+	VALUES ($1, $2, $3, $4)
+	ON CONFLICT (hash)
+	DO UPDATE
+	SET "block" = $2,
+	"deploy" = $3,
+	data = $4;`
+	_, err := db.Postgres.Exec(ctx, sql, hash, block, deploy, json)
+	return db.checkErr(err)
+}
+
+// InsertRawTransfer in the database
+func (db *DB) InsertRawDeployInfo(ctx context.Context, hash string, block string, json string) error {
+	hash = strings.ToLower(hash)
+	const sql = `INSERT INTO raw_deploy_infos ("hash", "block", "data")
+	VALUES ($1, $2, $3)
+	ON CONFLICT (hash)
+	DO UPDATE
+	SET "block" = $2,
+	data = $3;`
+	_, err := db.Postgres.Exec(ctx, sql, hash, block, json)
 	return db.checkErr(err)
 }
 
@@ -289,12 +412,14 @@ func (db *DB) InsertRewards(ctx context.Context, rowsToInsert [][]interface{}) e
 		[]string{"block", "era", "delegator_public_key", "validator_public_key", "amount"},
 		pgx.CopyFromRows(rowsToInsert),
 	)
+	// TODO: Causes troubles when table is too big, find why we delete ?
 	if err != nil || count < int64(len(rowsToInsert)) {
-		const sql = `DELETE FROM rewards WHERE block = $1;`
-		_, errD := db.Postgres.Query(ctx, sql, rowsToInsert[0][0])
-		if db.checkErr(errD) != nil {
-			return db.checkErr(errD)
-		}
+		//const sql = `DELETE FROM rewards WHERE block = $1;`
+		//_, errD := db.Postgres.Query(ctx, sql, rowsToInsert[0][0])
+		//if db.checkErr(errD) != nil {
+		//	return db.checkErr(errD)
+		//}
+		return db.checkErr(err)
 	}
 	return db.checkErr(err)
 }
@@ -303,6 +428,37 @@ func (db *DB) InsertRewards(ctx context.Context, rowsToInsert [][]interface{}) e
 func (db *DB) GetMissingBlocks(ctx context.Context) ([]int, error) {
 	const sql = `SELECT all_ids AS missing_ids FROM generate_series((SELECT MIN(height) FROM blocks), (SELECT MAX(height) FROM blocks)) all_ids EXCEPT SELECT height FROM blocks;`
 	rows, err := db.Postgres.Query(ctx, sql)
+	if db.checkErr(err) != nil {
+		return []int{}, db.checkErr(err)
+	}
+	defer rows.Close()
+	var missingDeploys []int
+	for rows.Next() {
+		missing := struct {
+			id int
+		}{}
+		err = rows.Scan(&missing.id)
+		if db.checkErr(err) != nil {
+			return []int{}, db.checkErr(err)
+		}
+
+		log.Printf("Missing block found: id=%d ", missing.id)
+		missingDeploys = append(missingDeploys, missing.id)
+	}
+	// check rows.Err() after the last rows.Next() :
+	if err = rows.Err(); db.checkErr(err) != nil {
+		return []int{}, db.checkErr(err)
+		// on top of errors triggered by bad conditions on the 'rows.Scan()' call,
+		// there could also be some bad things like a truncated response because
+		// of some network error, etc ...
+	}
+	return missingDeploys, nil
+}
+
+// GetMissingBlocks from the database
+func (db *DB) GetMissingBlocksFromHeight(ctx context.Context, startHeight int) ([]int, error) {
+	const sql = `SELECT all_ids AS missing_ids FROM generate_series($1 , (SELECT MAX(height) FROM blocks)) all_ids EXCEPT SELECT height FROM blocks;`
+	rows, err := db.Postgres.Query(ctx, sql, startHeight)
 	if db.checkErr(err) != nil {
 		return []int{}, db.checkErr(err)
 	}
@@ -378,6 +534,24 @@ func (db *DB) GetDeploy(ctx context.Context, hash string) (deploy.Result, error)
 	return d, nil
 }
 
+// GetTransfer from the database
+func (db *DB) GetTransfer(ctx context.Context, hash string) (transfer.Result, error) {
+	const sql = `SELECT data FROM raw_transfers WHERE hash = $1;`
+	rows, err := db.Postgres.Query(ctx, sql, hash)
+	if db.checkErr(err) != nil {
+		return transfer.Result{}, db.checkErr(err)
+	}
+	defer rows.Close()
+	var d transfer.Result
+	for rows.Next() {
+		err = rows.Scan(&d)
+		if db.checkErr(err) != nil {
+			return transfer.Result{}, db.checkErr(err)
+		}
+	}
+	return d, nil
+}
+
 // GetRawBlock from the database
 func (db *DB) GetRawBlock(ctx context.Context, hash string) (block.Result, error) {
 	const sql = `SELECT data FROM raw_blocks WHERE hash = $1;`
@@ -404,6 +578,33 @@ func (db *DB) CountDeploys(ctx context.Context, hashes []string) (int, error) {
 	}
 	paramrefs = paramrefs[:len(paramrefs)-1] // remove last ","
 	sql := `SELECT count(*) FROM deploys WHERE hash IN (` + paramrefs + `)`
+	genericHashes := make([]interface{}, len(hashes))
+	for i, v := range hashes {
+		genericHashes[i] = v
+	}
+	rows, err := db.Postgres.Query(ctx, sql, genericHashes...)
+	if db.checkErr(err) != nil {
+		return 0, db.checkErr(err)
+	}
+	defer rows.Close()
+	var d int
+	for rows.Next() {
+		err = rows.Scan(&d)
+		if db.checkErr(err) != nil {
+			return 0, db.checkErr(err)
+		}
+	}
+	return d, nil
+}
+
+// CountTransfers from the database
+func (db *DB) CountTransfers(ctx context.Context, hashes []string) (int, error) {
+	var paramrefs string
+	for i := range hashes {
+		paramrefs += `$` + strconv.Itoa(i+1) + `,`
+	}
+	paramrefs = paramrefs[:len(paramrefs)-1] // remove last ","
+	sql := `SELECT count(*) FROM transfers WHERE hash IN (` + paramrefs + `)`
 	genericHashes := make([]interface{}, len(hashes))
 	for i, v := range hashes {
 		genericHashes[i] = v

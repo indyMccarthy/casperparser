@@ -8,13 +8,17 @@ import (
 	"casperParser/types/contract"
 	"casperParser/types/contractPackage"
 	"casperParser/types/deploy"
+	"casperParser/types/deployInfo"
 	"casperParser/types/reward"
+	"casperParser/types/transfer"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
+
+	//"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -125,6 +129,22 @@ func (c *Client) GetAuction() (auction.Result, error) {
 	return result, nil
 }
 
+func (c *Client) GetAuctionEra(blockHeight int) (auction.Result, error) {
+	resp, err := c.RpcCall("state_get_auction_info", map[string]interface{}{
+		"block_identifier": map[string]int{"Height": blockHeight}})
+
+	if err != nil {
+		return auction.Result{}, err
+	}
+
+	var result auction.Result
+	err = json.Unmarshal(resp.Result, &result)
+	if err != nil {
+		return auction.Result{}, fmt.Errorf("failed to get result: %w", err)
+	}
+	return result, nil
+}
+
 // GetDeploy from the casper blockchain
 func (c *Client) GetDeploy(hash string) (deploy.Result, json.RawMessage, error) {
 	resp, err := c.RpcCall("info_get_deploy", map[string]string{
@@ -132,14 +152,74 @@ func (c *Client) GetDeploy(hash string) (deploy.Result, json.RawMessage, error) 
 	})
 
 	if err != nil {
+		println("ERROR RPC call GetDeploy ", hash)
+		fmt.Printf("%v", err)
 		return deploy.Result{}, json.RawMessage{}, err
 	}
 	var result deploy.Result
 	err = json.Unmarshal(resp.Result, &result)
 	if err != nil {
+		println("ERROR unmarshalling GetDeploy")
+		fmt.Printf("%v", err)
 		return deploy.Result{}, json.RawMessage{}, fmt.Errorf("failed to get result: %w", err)
 	}
 
+	return result, resp.Result, nil
+}
+
+func addDeployHashPrefix(deployHash string) string {
+	return "deploy-" + deployHash
+}
+
+// GetDeploy from the casper blockchain
+func (c *Client) GetDeployInfo(srh string, hash string) (deployInfo.Result, json.RawMessage, error) {
+	prefixed_hash := addDeployHashPrefix(hash)
+	resp, err := c.RpcCall("query_global_state", map[string]interface{}{"state_identifier": map[string]string{"StateRootHash": srh}, "key": prefixed_hash})
+	if err != nil {
+		//println("Fails to get DeployInfo for hash ", hash, " on state ", srh, ". Probably errored Deploy. To handled")
+		//fmt.Printf("%v", err)
+		return deployInfo.Result{}, json.RawMessage{}, err
+	}
+
+	if err != nil {
+		return deployInfo.Result{}, json.RawMessage{}, err
+	}
+	var result deployInfo.Result
+	err = json.Unmarshal(resp.Result, &result)
+	if err != nil {
+		return deployInfo.Result{}, json.RawMessage{}, fmt.Errorf("failed to get result: %w", err)
+	}
+
+	return result, resp.Result, nil
+}
+
+func addTransferHashPrefix(transferHash string) string {
+	if strings.HasPrefix(transferHash, "transfer-") {
+		return transferHash
+	} else {
+		return "transfer-" + transferHash
+	}
+}
+
+// GetTransfer from the casper blockchain TODO
+func (c *Client) GetTransfer(srh string, hash string) (transfer.Result, json.RawMessage, error) {
+	prefixed_hash := addTransferHashPrefix(hash)
+	resp, err := c.RpcCall("query_global_state", map[string]interface{}{"state_identifier": map[string]string{"StateRootHash": srh}, "key": prefixed_hash})
+	if err != nil {
+		println("ERROR on RPC Call Get Transfer")
+		println(srh, prefixed_hash)
+		fmt.Printf("%v", err)
+		return transfer.Result{}, json.RawMessage{}, err
+	}
+
+	var result transfer.Result
+	err = json.Unmarshal(resp.Result, &result)
+	if err != nil {
+		println("ERROR on Unmarshalling")
+		fmt.Printf("%v", err)
+		return transfer.Result{}, json.RawMessage{}, fmt.Errorf("failed to get result: %w", err)
+	}
+	//log.Println(result)
 	return result, resp.Result, nil
 }
 
@@ -202,7 +282,7 @@ func (c *Client) GetMainPurse(hash string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to get result: %w", err)
 	}
-	log.Println(result)
+	//log.Println(result)
 	return result.StoredValue.Account.MainPurse, nil
 }
 

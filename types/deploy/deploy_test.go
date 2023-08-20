@@ -4,10 +4,11 @@ import (
 	"casperParser/types/config"
 	"casperParser/utils"
 	"encoding/json"
-	"github.com/mitchellh/mapstructure"
-	"github.com/spf13/viper"
 	"log"
 	"testing"
+
+	"github.com/mitchellh/mapstructure"
+	"github.com/spf13/viper"
 )
 
 var transferDeploy = `{"deploy": {"hash": "2d0e59821d67125ab7a07ac719ed6696ce4dd4498ef6f3c283ac7d02f9de7259", "header": {"ttl": "1h", "account": "017717a9bb1f07cbb1b6c3afaaad9ff3b8a5b75ea13e5aae6ce33b4b74676c647c", "body_hash": "36088013e89250b53807fd562a047f40b076f97db0c557eec80d3b2a006c7400", "gas_price": 1, "timestamp": "2021-04-08T18:28:13.061Z", "chain_name": "casper-test", "dependencies": []}, "payment": {"ModuleBytes": {"args": [["amount", {"bytes": "0400ca9a3b", "parsed": "1000000000", "cl_type": "U512"}]], "module_bytes": ""}}, "session": {"Transfer": {"args": [["amount", {"bytes": "05007c6f5de8", "parsed": "998000000000", "cl_type": "U512"}], ["target", {"bytes": "e70b850efb68c64e2443da2386452b0d8e4e799362edef0ff56eea8efb114815", "parsed": "e70b850efb68c64e2443da2386452b0d8e4e799362edef0ff56eea8efb114815", "cl_type": {"ByteArray": 32}}], ["id", {"bytes": "00", "parsed": null, "cl_type": {"Option": "U64"}}]]}}, "approvals": [{"signer": "017717a9bb1f07cbb1b6c3afaaad9ff3b8a5b75ea13e5aae6ce33b4b74676c647c", "signature": "0115b52bfc9632454713987c42a75f85d615b3e035a82894ed112f75779ed44cba0694941c1e1cc68cac0f902d6dbd0524f2f81667969c333dfe9a2e0d143edd06"}]}, "api_version": "1.4.6", "execution_results": [{"result": {"Success": {"cost": "10000", "effect": {"operations": [{"key": "balance-f3abd4d174755d6127e2145876b54e14a1280694cfd1f3924565397808cb7c3f", "kind": "Write"}, {"key": "hash-8cf5e4acf51f54eb59291599187838dc3bc234089c46fc6ca8ad17e762ae4401", "kind": "Read"}, {"key": "balance-62f7fe1cecb1a4c600ffa791479ce52fb8cbda408815f4dd1b1e0d82e704579a", "kind": "Write"}, {"key": "balance-98d945f5324f865243b7c02c0417ab6eac361c5c56602fd42ced834a1ba201b6", "kind": "Read"}, {"key": "balance-0a24ef56971d46bfefbd5590afe20e5f3482299aba74e1a0fc33a55008cf9453", "kind": "Write"}, {"key": "transfer-f8d688cfc73ca7a06925b0b1226d1b902ea09cb799aecee8c3dcbb69c23acd5a", "kind": "Write"}, {"key": "deploy-2d0e59821d67125ab7a07ac719ed6696ce4dd4498ef6f3c283ac7d02f9de7259", "kind": "Write"}, {"key": "hash-010c3fe81b7b862e50c77ef9a958a05bfa98444f26f96f23d37a13c96244cfb7", "kind": "Read"}, {"key": "account-hash-e70b850efb68c64e2443da2386452b0d8e4e799362edef0ff56eea8efb114815", "kind": "Read"}], "transforms": [{"key": "hash-8cf5e4acf51f54eb59291599187838dc3bc234089c46fc6ca8ad17e762ae4401", "transform": "Identity"}, {"key": "balance-0a24ef56971d46bfefbd5590afe20e5f3482299aba74e1a0fc33a55008cf9453", "transform": {"AddUInt512": "998000000000"}}, {"key": "balance-98d945f5324f865243b7c02c0417ab6eac361c5c56602fd42ced834a1ba201b6", "transform": "Identity"}, {"key": "deploy-2d0e59821d67125ab7a07ac719ed6696ce4dd4498ef6f3c283ac7d02f9de7259", "transform": {"WriteDeployInfo": {"gas": "10000", "from": "account-hash-7a697fb8fcbb706d0c42fe97c2b0b2472c634569bf71e71d07ad1b158c01f839", "source": "uref-f3abd4d174755d6127e2145876b54e14a1280694cfd1f3924565397808cb7c3f-007", "transfers": ["transfer-f8d688cfc73ca7a06925b0b1226d1b902ea09cb799aecee8c3dcbb69c23acd5a"], "deploy_hash": "2d0e59821d67125ab7a07ac719ed6696ce4dd4498ef6f3c283ac7d02f9de7259"}}}, {"key": "account-hash-e70b850efb68c64e2443da2386452b0d8e4e799362edef0ff56eea8efb114815", "transform": "Identity"}, {"key": "hash-010c3fe81b7b862e50c77ef9a958a05bfa98444f26f96f23d37a13c96244cfb7", "transform": "Identity"}, {"key": "balance-f3abd4d174755d6127e2145876b54e14a1280694cfd1f3924565397808cb7c3f", "transform": {"WriteCLValue": {"bytes": "04f06c3577", "parsed": "1999990000", "cl_type": "U512"}}}, {"key": "transfer-f8d688cfc73ca7a06925b0b1226d1b902ea09cb799aecee8c3dcbb69c23acd5a", "transform": {"WriteTransfer": {"id": null, "to": "account-hash-e70b850efb68c64e2443da2386452b0d8e4e799362edef0ff56eea8efb114815", "gas": "0", "from": "account-hash-7a697fb8fcbb706d0c42fe97c2b0b2472c634569bf71e71d07ad1b158c01f839", "amount": "998000000000", "source": "uref-f3abd4d174755d6127e2145876b54e14a1280694cfd1f3924565397808cb7c3f-007", "target": "uref-0a24ef56971d46bfefbd5590afe20e5f3482299aba74e1a0fc33a55008cf9453-004", "deploy_hash": "2d0e59821d67125ab7a07ac719ed6696ce4dd4498ef6f3c283ac7d02f9de7259"}}}, {"key": "balance-62f7fe1cecb1a4c600ffa791479ce52fb8cbda408815f4dd1b1e0d82e704579a", "transform": {"AddUInt512": "10000"}}]}, "transfers": ["transfer-f8d688cfc73ca7a06925b0b1226d1b902ea09cb799aecee8c3dcbb69c23acd5a"]}}, "block_hash": "da006f14c000b23977c5b40c7163a5d5a993c08b156751c30b096522362e1a16"}]}`
@@ -129,9 +130,9 @@ func TestResult_GetResultAndCost(t *testing.T) {
 		if err != nil {
 			t.Errorf("Unable to unmarshal transferDeploy deploy : %s", err)
 		}
-		result, cost, err := deployResult.GetResultAndCost()
-		if err != nil || cost != "10000" || result != true {
-			t.Errorf("deploy cost and result bad parsing detected. Received : %t %s. Expected: %t %s ", result, cost, true, "10000")
+		result, cost, errorMessage, err := deployResult.GetResultAndCost()
+		if err != nil || cost != "10000" || result != "success" || errorMessage != "error_message" {
+			t.Errorf("deploy cost and result bad parsing detected. Received : %s %s %s. Expected: %s %s %s", result, cost, errorMessage, "success", "10000", "error_message")
 		}
 	})
 	t.Run("Should parse result and cost of storedContractByNameDeploy", func(t *testing.T) {
@@ -140,9 +141,9 @@ func TestResult_GetResultAndCost(t *testing.T) {
 		if err != nil {
 			t.Errorf("Unable to unmarshal storedContractByNameDeploy deploy : %s", err)
 		}
-		result, cost, err := deployResult.GetResultAndCost()
-		if err != nil || cost != "11406830" || result != false {
-			t.Errorf("deploy cost and result bad parsing detected. Received : %t %s. Expected: %t %s ", result, cost, false, "11406830")
+		result, cost, errorMessage, err := deployResult.GetResultAndCost()
+		if err != nil || cost != "11406830" || result != "failure" || errorMessage != "" {
+			t.Errorf("deploy cost and result bad parsing detected. Received : %s %s %s. Expected: %s %s %s ", result, cost, errorMessage, "failure", "11406830", "")
 		}
 	})
 }

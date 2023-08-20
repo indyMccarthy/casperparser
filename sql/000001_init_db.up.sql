@@ -19,7 +19,8 @@ CREATE TABLE "deploys"
     "hash"          VARCHAR(64) PRIMARY KEY,
     "from"          VARCHAR(68) NOT NULL,
     "cost"          VARCHAR     NOT NULL,
-    "result"        boolean     NOT NULL,
+    "result"        VARCHAR     NOT NULL,
+    "error_message" VARCHAR,
     "timestamp"     timestamptz NOT NULL,
     "block"         VARCHAR(64) NOT NULL,
     "type"          VARCHAR     NOT NULL,
@@ -35,6 +36,45 @@ CREATE TABLE "raw_deploys"
 (
     "hash" VARCHAR(64) PRIMARY KEY,
     "data" jsonb NOT NULL
+);
+
+CREATE TABLE "deploy_infos"
+(
+    "hash"          VARCHAR(64) PRIMARY KEY,
+    "block"         VARCHAR(64) NOT NULL,
+    "from"          VARCHAR(90) NOT NULL,
+    "source"        VARCHAR(90) NOT NULL,
+    "gas"           BIGINT      NOT NULL,
+    "transfers"     VARCHAR     NOT NULL
+);
+
+CREATE TABLE "raw_deploy_infos"
+(
+    "hash"  VARCHAR(64) PRIMARY KEY,
+    "block" VARCHAR(64) NOT NULL,
+    "data"  jsonb NOT NULL
+);
+
+CREATE TABLE "transfers"
+(
+    "hash"   VARCHAR(80) PRIMARY KEY,
+    "block"  VARCHAR(80) NOT NULL,
+    "deploy" VARCHAR(80) NOT NULL,
+    "from"   VARCHAR(80) NOT NULL,
+    "to"     VARCHAR(80) NOT NULL,
+    "source" VARCHAR(80) NOT NULL,
+    "target" VARCHAR(80) NOT NULL,
+    "amount" BIGINT      NOT NULL,
+    "gas"    BIGINT      NOT NULL,
+    "id"     VARCHAR(80) NOT NULL
+);
+
+CREATE TABLE "raw_transfers"
+(
+    "hash"   VARCHAR(80) PRIMARY KEY,
+    "block"  VARCHAR(80) NOT NULL,
+    "deploy" VARCHAR(80) NOT NULL,
+    "data"   jsonb NOT NULL
 );
 
 CREATE TABLE "contract_packages"
@@ -123,6 +163,12 @@ ALTER TABLE "rewards"
 ALTER TABLE "deploys"
     ADD FOREIGN KEY ("block") REFERENCES "blocks" ("hash");
 
+ALTER TABLE "deploy_infos"
+    ADD FOREIGN KEY ("block") REFERENCES "blocks" ("hash");
+
+ALTER TABLE "transfers"
+    ADD FOREIGN KEY ("block") REFERENCES "blocks" ("hash");
+
 ALTER TABLE "blocks"
     ADD FOREIGN KEY ("hash") REFERENCES "raw_blocks" ("hash");
 
@@ -144,6 +190,7 @@ CREATE INDEX ON "deploys" ("contract_hash");
 CREATE INDEX ON "deploys" ("result");
 CREATE INDEX ON "deploys" ("timestamp");
 CREATE INDEX ON "delegators" ("delegatee");
+CREATE INDEX ON "rewards" ("validator_public_key");
 
 CREATE VIEW full_stats AS
 SELECT count(*), type, date_trunc('day', timestamp) as day
@@ -180,7 +227,7 @@ SELECT 'delegate'                                                as type,
 from deploys
 WHERE timestamp >= NOW() - INTERVAL '14 DAY'
   and metadata_type = 'delegate'
-  AND result is true
+  AND result = 'success'
 GROUP BY day
 UNION
 SELECT 'undelegate'                                              as type,
@@ -189,7 +236,7 @@ SELECT 'undelegate'                                              as type,
 from deploys
 WHERE timestamp >= NOW() - INTERVAL '14 DAY'
   and metadata_type = 'undelegate'
-  AND result is true
+  AND result = 'success'
 GROUP BY day
 UNION
 SELECT 'transfer'                                                as type,
@@ -198,7 +245,7 @@ SELECT 'transfer'                                                as type,
 from deploys
 WHERE timestamp >= NOW() - INTERVAL '14 DAY'
   and type = 'transfer'
-  AND result is true
+  AND result = 'success'
 GROUP BY day;
 
 CREATE VIEW rich_list AS
@@ -217,13 +264,13 @@ CREATE VIEW allowance AS
 SELECT DISTINCT metadata -> 'spender' -> 'Hash' as spender, "from", contract_hash
 FROM deploys
 where metadata_type = 'approve'
-  and result = true
+  and result = 'success'
   and metadata -> 'spender' -> 'Hash' is not null
 UNION
 SELECT DISTINCT metadata -> 'spender' -> 'Account' as spender, "from", contract_hash
 FROM deploys
 where metadata_type = 'approve'
-  and result = true
+  and result = 'success'
   and metadata -> 'spender' -> 'Account' is not null;
 
 CREATE VIEW contracts_list AS
@@ -275,8 +322,8 @@ CREATE FUNCTION block_details(blockhash VARCHAR(64), OUT total NUMERIC, OUT succ
                               OUT total_cost NUMERIC) AS
 $$
 SELECT count(*)                                                                   as total,
-       (SELECT count(*) from deploys where block = blockhash and result is true)  as success,
-       (SELECT count(*) from deploys where block = blockhash and result is false) as failed,
+       (SELECT count(*) from deploys where block = blockhash and result = 'success')  as success,
+       (SELECT count(*) from deploys where block = blockhash and result = 'failure') as failed,
        sum(cost::NUMERIC)                                                         as total_cost
 FROM deploys
 where block = blockhash;
@@ -286,8 +333,8 @@ CREATE FUNCTION contract_details(contracthash VARCHAR(64), OUT total NUMERIC, OU
                                  OUT total_cost NUMERIC) AS
 $$
 SELECT count(*)                                                                              as total,
-       (SELECT count(*) from deploys where contract_hash = contracthash and result is true)  as success,
-       (SELECT count(*) from deploys where contract_hash = contracthash and result is false) as failed,
+       (SELECT count(*) from deploys where contract_hash = contracthash and result = 'success')  as success,
+       (SELECT count(*) from deploys where contract_hash = contracthash and result = 'failure') as failed,
        sum(cost::NUMERIC)                                                                    as total_cost
 FROM deploys
 where contract_hash = contracthash;
@@ -304,14 +351,14 @@ SELECT DISTINCT contract_hash
 FROM deploys
 WHERE contract_hash IN (SELECT hash from contracts where contracts.type = 'erc20' or contracts.type = 'uniswaperc20')
   and "from" = publickey
-  and result is true
+  and result = 'success'
 UNION
 SELECT DISTINCT contract_hash
 FROM deploys
 WHERE contract_hash IN (SELECT hash from contracts where contracts.type = 'erc20' or contracts.type = 'uniswaperc20')
   and (metadata -> 'recipient' ->> 'Account' = accounthash
     or metadata ->> 'recipient' = accounthash)
-  and result is true;
+  and result = 'success';
 $$ LANGUAGE SQL;
 
 CREATE FUNCTION erc20_holders(contracthash VARCHAR)
@@ -324,19 +371,19 @@ $$
 SELECT DISTINCT "from" as account
 FROM deploys
 WHERE contract_hash = contracthash
-  and result is true
+  and result = 'success'
 UNION
 SELECT DISTINCT metadata -> 'recipient' ->> 'Account' as account
 FROM deploys
 WHERE contract_hash = contracthash
   and metadata -> 'recipient' ->> 'Account' != ''
-  and result is true
+  and result = 'success'
 UNION
 SELECT DISTINCT metadata ->> 'recipient' as account
 FROM deploys
 WHERE contract_hash = contracthash
   and length(metadata ->> 'recipient') = 64
-  and result is true;
+  and result = 'success';
 $$ LANGUAGE SQL;
 
 DROP ROLE IF EXISTS web_anon;

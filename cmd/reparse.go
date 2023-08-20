@@ -5,8 +5,9 @@ import (
 	"casperParser/db"
 	"casperParser/tasks"
 	"context"
-	"github.com/hibiken/asynq"
 	"log"
+
+	"github.com/hibiken/asynq"
 
 	"github.com/spf13/cobra"
 )
@@ -17,7 +18,7 @@ var reparsePool int
 
 // reparseCmd represents the reparse command
 var reparseCmd = &cobra.Command{
-	Use:   "reparse [all|era|deploys|moduleBytes|exceptTransfers]",
+	Use:   "reparse [all|era|deploys|moduleBytes|exceptTransfers|accountPurses]",
 	Short: "Reparse all unknown deploys from the database without calling rpc",
 	Long: `Reparse specifics items from the database
 
@@ -29,8 +30,9 @@ deploys: only reparse deploys, will ignore any other deploy args
 moduleBytes: only reparse moduleBytes deploys
 exceptTransfers: only reparse deploys except transfers deploys
 systemPackageContracts: add system Packages Contracts. You must add the network type right after. Ex : reparse systemPackageContracts testnet
+accountPurses: Parses Account, purses
 `,
-	ValidArgs: []string{"all", "era", "deploys", "moduleBytes", "exceptTransfers", "accountPurses", "systemPackageContracts", "testnet", "mainnet"},
+	ValidArgs: []string{"all", "era", "deploys", "moduleBytes", "exceptTransfers", "accountPurses", "systemPackageContracts", "testnet", "mainnet", "auctionEra"},
 	Args:      cobra.MatchAll(cobra.MinimumNArgs(1), cobra.OnlyValidArgs),
 	Run: func(cmd *cobra.Command, args []string) {
 		arg := args[0]
@@ -40,6 +42,9 @@ systemPackageContracts: add system Packages Contracts. You must add the network 
 		}
 		if arg == "era" {
 			reparseEraBlocks(getRedisConf(cmd))
+		}
+		if arg == "auctionEra" {
+			reparseEraAuctions(getRedisConf(cmd))
 		}
 		if arg == "systemPackageContracts" {
 			if len(args) > 1 {
@@ -80,6 +85,11 @@ func reparseAll(redis asynq.RedisConnOpt) {
 func reparseEraBlocks(redis asynq.RedisConnOpt) {
 	const sql = `SELECT height FROM blocks WHERE era_end is true;`
 	startReparseBlocks(redis, sql)
+}
+
+func reparseEraAuctions(redis asynq.RedisConnOpt) {
+	const sql = `SELECT height FROM blocks WHERE era_end is true;`
+	startReparseAuctions(redis, sql)
 }
 
 func reparseDeploys(redis asynq.RedisConnOpt) {
@@ -156,6 +166,48 @@ func startReparseBlocks(redis asynq.RedisConnOpt, sql string) {
 	}
 }
 
+// startReparseBlocks reparse blocks for a given sql query
+func startReparseAuctions(redis asynq.RedisConnOpt, sql string) {
+	pgPool, err := db.NewPGXPool(context.Background(), getDatabaseConnectionString(), pool)
+	defer pgPool.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
+	reparseDatabase = db.DB{Postgres: pgPool}
+	reparseClient = asynq.NewClient(redis)
+	defer reparseClient.Close()
+
+	rows, err := reparseDatabase.Postgres.Query(context.Background(), sql)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		missing := struct {
+			height int
+		}{}
+		err := rows.Scan(&missing.height)
+		if err != nil {
+			log.Fatal(err)
+		}
+		task, err := tasks.NewAuctionEraTask(missing.height)
+		if err != nil {
+			log.Fatalf("could not create task: %v", err)
+		}
+		_, err = reparseClient.Enqueue(task, asynq.Queue("auctionera"))
+		if err != nil {
+			log.Fatalf("could not enqueue task: %v", err)
+		}
+	}
+	// check rows.Err() after the last rows.Next() :
+	if err := rows.Err(); err != nil {
+		// on top of errors triggered by bad conditions on the 'rows.Scan()' call,
+		// there could also be some bad things like a truncated response because
+		// of some network error, etc ...
+		log.Fatal(err)
+	}
+}
+
 // startReparseDeploys reparse deploys for a given sql query
 func startReparseDeploys(redis asynq.RedisConnOpt, sql string) {
 	pgPool, err := db.NewPGXPool(context.Background(), getDatabaseConnectionString(), pool)
@@ -209,10 +261,12 @@ func startAccountHashPurses(redis asynq.RedisConnOpt) {
 	reparseClient = asynq.NewClient(redis)
 	defer reparseClient.Close()
 
-	findMissingAccountHashesSql := `WITH accounthashes AS (SELECT DISTINCT LOWER(metadata ->> 'target') as accounthash
+	// TODO: Check if target is an accountHash
+	findMissingAccountHashesSql := `WITH accounthashes AS (SELECT LOWER(metadata ->> 'target') as accounthash, MIN(timestamp) as created_at
 FROM deploys
-WHERE length(LOWER(metadata ->> 'target')) < 66 AND type = 'transfer' AND result is true)
-SELECT accountHash from accounthashes
+WHERE length(LOWER(metadata ->> 'target')) < 66 AND type = 'transfer' AND result = 'success'
+GROUP BY accounthash)
+SELECT accountHash, created_at from accounthashes
 LEFT JOIN accounts ON accounthashes.accounthash = accounts.account_hash WHERE accounts.account_hash IS NULL;`
 
 	rows, err := reparseDatabase.Postgres.Query(context.Background(), findMissingAccountHashesSql)
@@ -222,7 +276,8 @@ LEFT JOIN accounts ON accounthashes.accounthash = accounts.account_hash WHERE ac
 	defer rows.Close()
 	for rows.Next() {
 		missing := struct {
-			hash string
+			hash             string
+			deploy_timestamp string
 		}{}
 		err := rows.Scan(&missing.hash)
 		if err != nil {
@@ -257,14 +312,18 @@ func startAccountPurses(redis asynq.RedisConnOpt) {
 	reparseClient = asynq.NewClient(redis)
 	defer reparseClient.Close()
 
-	findMissingPublicKeysSql := `WITH keys AS (SELECT DISTINCT LOWER("from") as key
+	// TODO: Check if target is an accountHash
+	findMissingPublicKeysSql := `WITH keys AS (SELECT LOWER("from") as key, MIN(timestamp) as created_at
 FROM deploys
 WHERE ("from" LIKE '01%' AND length("from") = 66) OR ("from" LIKE '02%' AND length("from") = 68)
+GROUP BY key
 UNION
-SELECT DISTINCT LOWER(metadata ->> 'target') as key
+SELECT LOWER(metadata ->> 'target') as key, MIN(timestamp) as created_at
 FROM deploys
-WHERE length(LOWER(metadata ->> 'target')) >= 66 AND length(LOWER(metadata ->> 'target')) <= 68 AND type = 'transfer' AND result is true)
-SELECT key from keys
+WHERE length(LOWER(metadata ->> 'target')) >= 66 AND length(LOWER(metadata ->> 'target')) <= 68 AND type = 'transfer' AND result = 'success'
+GROUP BY key
+)
+SELECT key, created_at from keys
 LEFT JOIN accounts ON keys.key = accounts.public_key WHERE accounts.public_key IS NULL;`
 
 	rows, err := reparseDatabase.Postgres.Query(context.Background(), findMissingPublicKeysSql)
@@ -274,7 +333,8 @@ LEFT JOIN accounts ON keys.key = accounts.public_key WHERE accounts.public_key I
 	defer rows.Close()
 	for rows.Next() {
 		missing := struct {
-			hash string
+			hash             string
+			deploy_timestamp string
 		}{}
 		err := rows.Scan(&missing.hash)
 		if err != nil {
@@ -319,7 +379,7 @@ func startUrefPurses(redis asynq.RedisConnOpt) {
                FROM deploys
                WHERE length(LOWER(metadata ->> 'target')) > 68
                  AND type = 'transfer'
-                 AND result is true
+                 AND result = 'success'
                UNION
                SELECT DISTINCT LOWER(main_purse) as uref
                FROM accounts)

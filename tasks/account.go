@@ -6,9 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/hibiken/asynq"
 	"log"
 	"strings"
+
+	"github.com/hibiken/asynq"
 )
 
 // TypeAccountHash Task account hash raw insert
@@ -72,7 +73,7 @@ func HandleAccountHashTask(ctx context.Context, t *asynq.Task) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("Hash: %s Purse: %s \n", p.Hash, purse)
+	//log.Printf("Hash: %s Purse: %s \n", p.Hash, purse)
 	var database = db.DB{Postgres: WorkerPool}
 
 	err = database.InsertAccountHash(ctx, p.Hash, purse)
@@ -104,7 +105,7 @@ func HandleAccountTask(ctx context.Context, t *asynq.Task) error {
 		}
 		return err
 	}
-	log.Printf("Hash: %s AccountHash: %s Purse: %s \n", p.Hash, accountHash, purse)
+	//log.Printf("Hash: %s AccountHash: %s Purse: %s \n", p.Hash, accountHash, purse)
 	var database = db.DB{Postgres: WorkerPool}
 
 	err = database.InsertAccount(ctx, p.Hash, accountHash, purse)
@@ -125,7 +126,7 @@ func HandlePurseTask(ctx context.Context, t *asynq.Task) error {
 
 	var database = db.DB{Postgres: WorkerPool}
 
-	log.Printf("Purse: %s \n", p.Hash)
+	//log.Printf("Purse: %s \n", p.Hash)
 	err := database.InsertPurse(ctx, p.Hash)
 	if err != nil {
 		return err
@@ -157,7 +158,7 @@ func HandleFetchPurseTask(ctx context.Context, t *asynq.Task) error {
 
 	var database = db.DB{Postgres: WorkerPool}
 
-	log.Printf("Purse: %s Balance: %s \n", p.Hash, balance)
+	//log.Printf("Purse: %s Balance: %s \n", p.Hash, balance)
 	err = database.InsertPurseBalance(ctx, p.Hash, balance)
 	if err != nil {
 		return err
